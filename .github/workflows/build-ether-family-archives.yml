@@ -1,0 +1,67 @@
+name: Build Ether Family Archives
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-ether-family-archives.yml"
+      - "body-energy/05-ether/chapters/**"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Build and verify 12 family ZIP files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import re
+
+          source = Path("body-energy/05-ether/chapters")
+          output = Path("body-energy/05-ether/archives")
+          output.mkdir(parents=True, exist_ok=True)
+          expected = [f"{family:02d}-{chapter:02d}.html"
+                      for family in range(1, 13)
+                      for chapter in range(1, 6)]
+          missing = [name for name in expected if not (source / name).is_file()]
+          if missing:
+              raise SystemExit("Missing chapter files: " + ", ".join(missing))
+
+          for family in range(1, 13):
+              prefix = f"{family:02d}-"
+              files = sorted(p for p in source.glob(prefix + "*.html")
+                             if re.fullmatch(rf"{family:02d}-0[1-5]\.html", p.name))
+              if len(files) != 5:
+                  raise SystemExit(f"Family {family:02d}: expected 5 chapters, found {len(files)}")
+              archive = output / f"family-{family:02d}.zip"
+              with ZipFile(archive, "w", ZIP_DEFLATED, compresslevel=9) as z:
+                  for file in files:
+                      z.write(file, arcname=file.name)
+              with ZipFile(archive, "r") as z:
+                  names = sorted(z.namelist())
+                  if len(names) != 5 or z.testzip() is not None:
+                      raise SystemExit(f"ZIP verification failed: {archive}")
+                  print(f"{archive}: {len(names)} files, {archive.stat().st_size} bytes")
+          print("Verified all 12 family archives (60 HTML chapters).")
+          PY
+      - name: Commit archives
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add body-energy/05-ether/archives/*.zip
+          if git diff --cached --quiet; then
+            echo "No archive changes to commit."
+          else
+            git commit -m "Add 12 verified ether family archives"
+            git push origin HEAD:main
+          fi
