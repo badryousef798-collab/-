@@ -1,0 +1,89 @@
+name: Build Sound and Vibration Encyclopedia ZIP
+
+on:
+  push:
+    paths:
+      - ".github/workflows/build-sound-vibration-zip.yml"
+      - "body-energy/10-sound-vibration/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build and verify complete chapter ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          source = Path("body-energy/10-sound-vibration")
+          chapters = source / "chapters"
+          index = source / "index.html"
+          if not index.is_file():
+              raise SystemExit("Master index is missing.")
+          expected = {f"{family:02d}-{chapter:02d}.html"
+                      for family in range(1, 10)
+                      for chapter in range(1, 10)}
+          actual = {p.name for p in chapters.glob("*.html") if p.is_file()}
+          missing, unexpected = sorted(expected - actual), sorted(actual - expected)
+          if missing or unexpected or len(actual) != 81:
+              raise SystemExit(f"Inventory mismatch: count={len(actual)}, missing={missing}, unexpected={unexpected}")
+
+          family_names = [
+              "01-الأسس الفيزيائية للصوت والاهتزاز",
+              "02-مصادر الصوت وانتشاره في الأوساط",
+              "03-الرنين والاهتزازات الميكانيكية",
+              "04-الصوتيات والإدراك السمعي",
+              "05-الصوت والموسيقى والآلات",
+              "06-الصوت في الطبيعة والبيئة",
+              "07-التطبيقات التقنية والهندسية",
+              "08-الصوت والاهتزاز في الأنظمة الحيوية",
+              "09-البحث العلمي والسلامة والتقييم النقدي",
+          ]
+          root = "طاقة الصوت والاهتزاز"
+          output = Path("dist/طاقة-الصوت-والاهتزاز.zip")
+          output.parent.mkdir(parents=True, exist_ok=True)
+          readme = """موسوعة طاقة الصوت والاهتزاز
+          ===========================
+          يتضمن هذا الأرشيف 9 عائلات، في كل عائلة 9 فصول HTML مستقلة (81 فصلاً).
+          افتح index.html للوصول إلى الفهرس الرئيسي.
+          نُظمت ملفات الفصول داخل مجلدات العائلات لتسهيل التصفح والأرشفة.
+          """
+          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=9) as zf:
+              zf.write(index, f"{root}/index.html")
+              zf.writestr(f"{root}/README.txt", readme)
+              for family, folder in enumerate(family_names, 1):
+                  members = sorted(chapters.glob(f"{family:02d}-*.html"))
+                  if len(members) != 9:
+                      raise SystemExit(f"Family {family:02d}: expected 9 files, got {len(members)}")
+                  for path in members:
+                      zf.write(path, f"{root}/{folder}/{path.name}")
+          with ZipFile(output, "r") as zf:
+              names = zf.namelist()
+              bad = zf.testzip()
+              html = [n for n in names if n.endswith(".html")]
+              if bad is not None or len(html) != 82:
+                  raise SystemExit(f"ZIP verification failed: bad={bad}, html_count={len(html)}")
+              for family, folder in enumerate(family_names, 1):
+                  count = sum(n.startswith(f"{root}/{folder}/") and n.endswith(".html") for n in names)
+                  if count != 9:
+                      raise SystemExit(f"ZIP family verification failed: {folder}: {count}")
+          print(f"SUCCESS: {output} | {len(names)} entries | 81 chapter files + index | {output.stat().st_size} bytes")
+          PY
+
+      - name: Upload verified ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: sound-vibration-complete-81-chapters
+          path: dist/طاقة-الصوت-والاهتزاز.zip
+          if-no-files-found: error
+          retention-days: 14
